@@ -1,26 +1,65 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Text;
-using ThreadPool.ThreadPool;
+using ThreadPool.Pool;
 
 namespace ThreadPool.Task
 {
-    static class TaskFactory
+    public class TaskFactory
     {
-        static public IMyTask CreateSimpleTask<TResult> (WorkerPool workerpool, Func<TResult> func)
+        private static readonly object _syncRoot = new object();
+        private static TaskFactory _instance;
+        public static TaskFactory Instance
         {
-            var task = new SimpleTask<TResult>(func);
-            workerpool.Enqueue((IMyTask) task);
+            get
+            {
+                if (_instance is null)
+                {
+                    lock (_syncRoot)
+                    {
+                        if (_instance is null)
+                        {
+                            _instance = new TaskFactory();
+                        }
+                    }
+                }
 
-            return (IMyTask) task;
+                return _instance;
+            }
+            
         }
 
-        static public IMyTask CreateChainedTask<TInput, TNewResult> (WorkerPool workerpool, Func<TInput, TNewResult> func)
-        {
-            var task = new ChainedTask<TInput, TNewResult>(func);
-            workerpool.Enqueue((IMyTask)task);
+        private readonly TaskScheduler _taskScheduler;
 
-            return (IMyTask)task;
+        private TaskFactory ()
+        {
+            _taskScheduler = new TaskScheduler();
+        }
+
+        public TaskScheduler GetScheduler()
+        {
+            return _taskScheduler;
+        }
+
+        public MyTask<TResult> RunSimpleTask<TResult>(Func<TResult> func)
+        {
+            var task = new SimpleTask<TResult>(func, _taskScheduler);
+            task.Start();
+
+            return task;
+        }
+
+        public MyTask<TNewResult> RunChainedTask<TInput, TNewResult>(MyTask<TInput> PrevTask, Func<TInput, TNewResult> func)
+        {
+            var task = PrevTask.ContinueWith<TNewResult>(func);
+            task.Start();
+
+            return task;
+        }
+
+        public static void Dispose()
+        {
+            _instance = null;
         }
     }
 }

@@ -4,26 +4,26 @@ using System.Text;
 using System.Threading;
 using ThreadPool.Task;
 
-namespace ThreadPool.ThreadPool
+namespace ThreadPool.Pool
 {
-    class ThreadWorker
+    public class ThreadWorker : IDisposable
     {
         public bool IsWorking {get; set;}
         private CancellationToken _token;
         private Thread _thread;
         private readonly AutoResetEvent _NewTask;
-        private IMyTask _task;
+        private MyTask _task;
 
-        public ThreadWorker (CancellationToken token)
+        public ThreadWorker(CancellationToken token)
         {
             IsWorking = false;
             _token = token;
             _NewTask = new AutoResetEvent(false);
-            _thread = new Thread(new ThreadStart(Runtime));
-            _task = default;
+            _thread = new Thread(Runtime) { IsBackground = true };
+            _thread.Start();
         }
 
-        public void ExecuteTask(IMyTask task)
+        public void ExecuteTask(MyTask task)
         {
             _task = task;
             _NewTask.Set();
@@ -36,6 +36,7 @@ namespace ThreadPool.ThreadPool
 
         private void Runtime()
         {
+            Console.WriteLine("Thread {0} started", Thread.GetCurrentProcessorId());
             while (true)
             {
                 _NewTask.WaitOne();
@@ -47,13 +48,23 @@ namespace ThreadPool.ThreadPool
 
                 try
                 {
-                    // cast??? Console.WriteLine(((IMyTask<>)_task).Result);
+                    _task.Run();
+                    Console.WriteLine("Thread {0} processed the task {1}", Thread.GetCurrentProcessorId(), _task.ID);
                 }
                 catch (Exception exc)
                 {
                     Console.WriteLine("Error occured: " + exc.Message);
                 }
+                finally
+                {
+                    IsWorking = false;
+                }
             }
+        }
+
+        public void Dispose()
+        {
+            _NewTask.Dispose();
         }
     }
 }

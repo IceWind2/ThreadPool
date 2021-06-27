@@ -2,100 +2,134 @@
 using System.Collections.Generic;
 using System.Text;
 using System.Threading;
+using ThreadPool.Pool;
 
 namespace ThreadPool.Task
 {
-    abstract class MyTask<TResult> : IMyTask<TResult>
+    public abstract class MyTask 
     {
-        protected readonly ManualResetEvent _ResultReady;
+        protected TaskScheduler _taskScheduler;
+
         public bool IsCompleted { get; protected set; }
-        public TResult Result
-        {
-            get
-            {
-                if (!IsCompleted)
-                {
-                    ExecuteTask();
-                }
-                _ResultReady.WaitOne();
-                return Result;
-            }
-            protected set
-            {
-            }
-        }
+        public bool IsReady { get; set; }
+        public string ID { get; private set; }
+        protected bool _wasStarted;
+
+        protected List<MyTask> _nextTasks;
 
         public MyTask()
         {
             IsCompleted = false;
-            Result = default;
-            _ResultReady = new ManualResetEvent(false);
+            IsReady = false;
+            _wasStarted = false;
+            _nextTasks = new List<MyTask>();
+
+            Random rnd = new Random();
+            ID = string.Format("#{0}", rnd.Next(10000000, 99999999));
         }
 
-        protected abstract void ExecuteTask();
-        
-        //public abstract IMyTask ContinueWith<TNewResult>(Func<TResult, TNewResult> next);
+        public void Start()
+        {
+            if (!_wasStarted)
+            {
+                _wasStarted = true;
+                _taskScheduler.Enqueue(this);
+            }
+        }
+
+        public void Wait()
+        {
+            if (!_wasStarted)
+            {
+                return;
+            }
+
+            while (!IsCompleted)
+            {
+                Thread.Sleep(100);
+            }
+        }
+
+        internal abstract void Run();
     }
 
-    class SimpleTask<TResult> : MyTask<TResult>
+    public abstract class MyTask<TResult> : MyTask 
     {
-        public Func<TResult> Task { get; private set; }
+        protected TResult _result;
+        public TResult Result {
+            get 
+            {
+                if (!_wasStarted)
+                {
+                    Start();
+                }
 
-        public SimpleTask(Func<TResult> func)
+                if (!IsCompleted)
+                {
+                    Wait();
+                }
+
+                return _result;
+            }
+            protected set 
+            {
+                _result = value;
+                IsCompleted = true;
+            } 
+        }
+
+        public MyTask<TNewResult> ContinueWith<TNewResult>(Func<TResult, TNewResult> next)
+        {
+            MyTask<TNewResult> task = new ChainedTask<TResult, TNewResult>(this, next, _taskScheduler);
+            _nextTasks.Add(task);
+            if (IsCompleted)
+            {
+                task.IsReady = true;
+            }
+            task.Start();
+            return task;
+        }
+    }
+
+    public class SimpleTask<TResult> : MyTask<TResult>
+    {
+        private Func<TResult> Task;
+
+        public SimpleTask(Func<TResult> func, TaskScheduler taskScheduler)
             : base()
         {
             Task = func;
+            IsReady = true;
+            _taskScheduler = taskScheduler;
         }
 
-        protected override void ExecuteTask()
+        internal override void Run()
         {
-            try
-            {
-                Result = Task();
-                IsCompleted = true;
-                _ResultReady.Set();
-            }
-            catch (Exception exc)
-            {
-                throw new AggregateException(exc);
-            }
-        }
+            Result = Task();
 
-       /* public IMyTask ContinueWith<TNewResult>(Func<TResult, TNewResult> next)
-        {
-            
-        }*/
+            _nextTasks.ForEach(task => task.IsReady = true);
+        }
     }
 
-    class ChainedTask<TInput, TResult> : MyTask<TResult>
+    public class ChainedTask<TInput, TResult> : MyTask<TResult>
     {
-        public Func<TInput, TResult> Task { get; private set; }
+        private Func<TInput, TResult> Task;
 
-        private TInput _input;
+        private MyTask<TInput> _prevTask;
 
-        public ChainedTask(Func<TInput, TResult> func)
+        public ChainedTask(MyTask<TInput> prevTask, Func<TInput, TResult> func, TaskScheduler taskScheduler)
             : base()
         {
             Task = func;
+            _prevTask = prevTask;
+            _taskScheduler = taskScheduler;
         }
-
-        protected override void ExecuteTask()
+    
+        internal override void Run()
         {
-            try
-            {
-                Result = Task(_input);
-                IsCompleted = true;
-                _ResultReady.Set();
-            }
-            catch (Exception exc)
-            {
-                throw new AggregateException(exc);
-            }
+            Result = Task(_prevTask.Result);
+
+            _nextTasks.ForEach(task => task.IsReady = true);
         }
-
-        /*public IMyTask ContinueWith<TNewResult>(Func<TResult, TNewResult> next)
-        {
-
-        }*/
     }
 }
